@@ -165,8 +165,8 @@ Function CopyDiskFromTenant($sourcediskprofile, $diskname, $resourcegroupname, $
     $sourceismanaged = $false
     if ($sourcediskprofile.Vhd) {
 
-    
-        write-host "source disk is $($sourcediskprofile.vhd.uri) lookging for vdisk named $diskname"
+        
+        write-host "source blob disk is $($sourcediskprofile.vhd.uri) lookging for vdisk named $diskname"
         $disk = get-azdisk -resourcegroupname $resoucegroupname -name $diskname -ErrorAction SilentlyContinue
         if (!$disk) {
         
@@ -197,7 +197,7 @@ Function CopyDiskFromTenant($sourcediskprofile, $diskname, $resourcegroupname, $
     
         $disk = get-azdisk -resourcegroupname $resoucegroupname -name $diskname -ErrorAction SilentlyContinue
         if (!$disk) {
-            write-host "looking for recent blob with correct vhd name for $diskname"
+            write-host "looking for  managed  blob with correct vhd name for $diskname"
 
             $blob = Get-AzStorageBlob -context $stk.context -container "vhds" -prefix "$($diskname).vhd" -ErrorAction SilentlyContinue | sort lastmodified | select -last 1 | ? { ((get-date) - $_.Lastmodified.localdatetime ).totaldays -lt 10 }
             if ($blob) {
@@ -213,7 +213,7 @@ Function CopyDiskFromTenant($sourcediskprofile, $diskname, $resourcegroupname, $
                     write-host "could not find a recent snapshot for $($sourcedisk.name) creating a new one" 
                     $snapshotname = get-snapshotnextname -snapshots $sourcesnapshots -name "$($sourcedisk.name)-snapshot"
                     
-                    $snapshotconf = New-AzSnapshotConfig -sourceuri $sourcediskprofile.OsDisk.ManagedDisk.Id  -Location $sourcedisk.Location  -CreateOption copy -azcontext $sourcecontext  -SkuName Standard_LRS
+                    $snapshotconf = New-AzSnapshotConfig -sourceuri $sourcediskprofile.ManagedDisk.Id  -Location $sourcedisk.Location  -CreateOption copy -azcontext $sourcecontext  -SkuName Standard_LRS
                     $sourcesnapshot = New-AzSnapshot     -Snapshot $snapshotconf -SnapshotName  $snapshotname  -ResourceGroupName $resourceGroupName  -azcontext $sourcecontext
                     if (!$sourcesnapshot ) {
                         write-host "could not create snapshot " 
