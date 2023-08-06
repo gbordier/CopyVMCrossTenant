@@ -11,7 +11,13 @@ Azure subscriptions are part of Azure AD tenants, they can be moved from one ten
 
 this script will perform the actual copy of the VM including its undering resources providing the VM is not too complex.
 
-## feature list
+# Features list
+- Copy VM **across tenant** with same name, vnet name and convert disks to managed disks
+- Copy VM inside tenant to another subscription with same name , vnet name 
+- Delete/Recreate VM in a **different vnet**  in the same subscription
+
+
+## Copy VM across tenant
 
 - create dependant Virtual networks with the same address space and subnets
 - create Windows or Linux VM  enveloppe at the target preserving the following items
@@ -23,15 +29,33 @@ this script will perform the actual copy of the VM including its undering resour
 - create the target storage account if it does not exist yet in the target resource group
 - copy blob-based or managed disk based OS and Data drives to the target and *transform* them into Managed Disks using a simple naming such as vmname-OS, vmnamem-data-1 ... for BHD files
 
-**Public IPs are NOT preserved to created at the target**
+``` powershell
+.\CopyVMCrossTenant.ps1 -resourcegroupname mytargetrg -vmname myVM 
 
-## pre-reqs
+```
+
+
+** Public IPs are NOT preserved if needed they could be added later using an auxilairy script **
+
+
+
+## Recreate VM in another vnet
+``` powershell
+
+.\CopyVMCrossTenant.ps1 -resourcegroupname myrg -vmname myVM -targetvnet vnetxxx  -samesubscription
+
+```
+
+# pre-reqs
 
 you *must* have the required permission on both the source and the target subscriptions, ideally you would use an Azure AD app and a certificate to get access to it , see (<https://learn.microsoft.com/en-us/powershell/azure/authenticate-azureps?view=azps-10.1.0>)
 
 to be able to use both tenant's credentials, we must store the cred as "Azure Context" and give them a name.
 
 the current context for the script will be the target context, the source context must exist and its name be passed to the script.
+
+## connect with admin credentials
+
 
 ``` powershell
 
@@ -41,6 +65,7 @@ Connect-AzAccount -tenantid $targettenant -subscriptionid $targetsub  -contextna
 select-azcontext Target
 
 ```
+## use an AAD app and certificate to authenticate
 
 if you are using the preferred method of using an AppID and Certificate,
 - create an AppID in one tenant, make it Cross tenant

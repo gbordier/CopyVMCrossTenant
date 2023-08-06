@@ -2,13 +2,15 @@
 
 .SYNOPSIS
 
-CopyVMCrossTenant is a script to copy a VM from one Tenant to an other.
+CopyVMCrossTenant is a script to copy or move a VM from one Tenant to an other.
 
 Azure subscriptions are part of Azure AD tenants, they can be moved from one tenant to the other, but it is not always possible
 - different ownerships
 - some resources cannnot move across 
 - the source subscription might need to remain in-place
 - ...
+
+
 
 .PARAMETER sametenant
 switch sametenant means we are going to move or copy the VM to a target resource resource group or vnet
@@ -56,7 +58,7 @@ optional parameter to set storage sku to something other than Standard_LRS
  .\CopVMCrossTenant.ps1 -resourcegroupname myRG -vmname VM1
 
  delete VM and recreate on alternate  vnet
- .\CopyVMCrossTenant.ps1 -resourcegroupname tredunion -vmname daloradius -targetvnet vnetxxx   -samesubscription
+ .\CopyVMCrossTenant.ps1 -resourcegroupname tredunion -vmname daloradius -targetvnet vnetxxx  -samesubscription
 
 
 
