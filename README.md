@@ -84,3 +84,37 @@ select-azcontext Target
 
 ```
 	
+#  What could go wrong
+
+## Machine not rebooting correctly
+to diagnoze, enable boot diagnostics and review console screen shot
+
+##  0x7B inaccessible boot device
+
+Usually with VMs that have several disks , try removing data disk and rebooti
+
+if that works, check disk signature with diskpart
+
+``` cmd
+
+diskpart list disk (usually 3 disks here with the temp D disk)
+sel dis 0 
+uniqueid disk
+sel dis 2
+uniqueid disk
+if both are the same , use
+uniqueid disk ID=4324234 or to fix disk signature conflict.
+
+``` 
+##  Stuck on black screen with blinking cursor
+
+usually, when the HyperV Generation is wrong, you may have created a V1 VM for a V2 source
+- delete the VM
+- delete the disk 
+- run the script again with -Generation2 switch to force Gen2
+
+
+
+
+the HyperV Generation might be wrong
+## inbound network connection blocked

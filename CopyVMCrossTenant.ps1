@@ -74,11 +74,12 @@ Param(
     [string] $storagesku = "Standard_LRS",
     [string] $targetvnet,
     [string] $sourceresourcegroupname,
-    [Microsoft.Azure.Commands.Compute.Models.PSVirtualMachine] $vm,
+#    [Microsoft.Azure.Commands.Compute.Models.PSVirtualMachine] $vm,
     [string]$stkname,
     [switch] $sametenant,
     [switch] $samesubscription,
-    [switch] $deletesourcevm
+    [switch] $deletesourcevm,
+    [switch] $Genereation2
 )
 
 ## globals
@@ -159,15 +160,17 @@ function GetNetInterfaceFromIpConfig ([string] $ipconf) {
 #endregion
 
 #region disk Blob, BlobSnapshot , Managed disk and snapshots manipulation
-Function CopyDiskFromTenant($sourcediskprofile, $diskname, $resourcegroupname, $stk, $sourcecontext, $vmname, $ostype = "Windows", $stksku = "Standard_LRS") {
+Function CopyDiskFromTenant($sourcediskprofile, $diskname,$sourceresourcegroupname, $resourcegroupname, $stk, $sourcecontext, $vmname, $ostype = "Windows", $stksku = "Standard_LRS") {
     
+    if (!$sourceresourcegroupname){sourceresourcegroupname=$resourcegroupname}
+
     ## storage section
     $sourceismanaged = $false
     if ($sourcediskprofile.Vhd) {
 
         
         write-host "source blob disk is $($sourcediskprofile.vhd.uri) lookging for vdisk named $diskname"
-        $disk = get-azdisk -resourcegroupname $resoucegroupname -name $diskname -ErrorAction SilentlyContinue
+        $disk = get-azdisk -resourcegroupname $resourcegroupname -name $diskname -ErrorAction SilentlyContinue
         if (!$disk) {
         
             write-host "looking for blob $($sourcediskprofile.Vhd.uri) at target"
@@ -195,7 +198,8 @@ Function CopyDiskFromTenant($sourcediskprofile, $diskname, $resourcegroupname, $
     if ($sourcediskprofile.ManagedDisk) {
         $sourceismanaged = $true
     
-        $disk = get-azdisk -resourcegroupname $resoucegroupname -name $diskname -ErrorAction SilentlyContinue
+        write-host "checking for existing managed  disk $diskname in $resourcegroupname"
+        $disk = get-azdisk -resourcegroupname $resourcegroupname -name $diskname -ErrorAction SilentlyContinue
         if (!$disk) {
             write-host "looking for  managed  blob with correct vhd name for $diskname"
 
@@ -205,9 +209,15 @@ Function CopyDiskFromTenant($sourcediskprofile, $diskname, $resourcegroupname, $
             }
             else {
                 ## TODO identigy existing blob target to avoid copying twice
-                $sourcedisk = $sourcediskprofile.ManagedDisk | Get-AzResource -azcontext $sourcecontext | get-azdisk -AzContext $sourcecontext
-                write-host "locating new recent snapshot for $($sourcedisk.name)[$($sourcedisk.id)]  " 
-                $sourcesnapshots = Get-AzSnapshot -ResourceGroupName $resourcegroupname -AzContext $sourcecontext 
+                
+                    $sourcedisk = $sourcediskprofile.ManagedDisk | Get-AzResource -azcontext $sourcecontext | get-azdisk -AzContext $sourcecontext
+                    write-host "locating new recent snapshot for $($sourcedisk.name)[$($sourcedisk.id)]  " 
+    
+                
+                    ## assuming snaphot is there and diskname is "$vmname-os"
+
+                
+                $sourcesnapshots = Get-AzSnapshot -ResourceGroupName $sourceresourcegroupname -AzContext $sourcecontext 
                 $sourcesnapshot = $sourcesnapshots | ? { $_.CreationData.SourceResourceId -eq $sourcedisk.Id } | ? { ((get-date) - $_.TimeCreated ).totaldays -lt 10 } | Sort-Object timecreated  | Select-Object -last 1
                 if (!$sourcesnapshot) {
                     write-host "could not find a recent snapshot for $($sourcedisk.name) creating a new one" 
@@ -292,7 +302,19 @@ Function GetOrCreateDiskFromBlob ($diskname, $stkname, $containername = "vhds", 
         
         $uri = $blob.BlobClient.uri.AbsoluteUri
         write-host "sku $sku name $diskname"
-        $diskConfig = New-AzDiskConfig -SkuName $sku -Location $location -DiskSizeGB ($blob.length / 1024 / 1024 / 1024 ) -SourceUri $uri -CreateOption Import  -storageaccountid $stk.id  -OsType $ostype
+        $p=@{
+            "Sku" = $sku 
+            "Location" =$location 
+            "DiskSizeGB" =($blob.length / 1024 / 1024 / 1024 ) 
+            "SourceUri"=  $uri 
+            "CreateOption" = "Import"
+            "storageaccountid" = $stk.id
+            "OsType"=  $ostype
+        }
+        if (($svm.HyperVGeneration -eq "V2") -or $Genereation2) {
+            $p.HyperVGeneration = "V2"
+        }
+        $diskConfig = New-AzDiskConfig @p
             
         $disk = New-AzDisk -DiskName $diskName -Disk $diskConfig -ResourceGroupName $resourceGroupName 
         
@@ -379,6 +401,7 @@ if (!$AzContext) {$AzContext = get-azcontext }
 
 $nics = @()
 $vm.NetworkProfile.NetworkInterfaces | % {
+    
     $nic = $_ | Get-AzResource -AzContext $AzContext | Get-AzNetworkInterface -AzContext $AzContext
     $ipconfs = @()
     $nic | Get-AzNetworkInterfaceIpConfig  -AzContext $AzContext | % {
@@ -469,11 +492,10 @@ if (!$stk) {
 }
 
 write-host "reading data from source VM $vmname in $($sourcecontext.name)"
-if ($vm) { $svm = $vm }
-else {
-    $svm = get-azvm -azcontext $sourcecontext -name $vmname -resourcegroupname $sourceresourcegroupname
+if ($vm) { $svm = $vm ; $vmname = $vm.name}
+if (!$svm -or !$svm.HyperVGeneration){
+        $svm = get-azvm -azcontext $sourcecontext -name $vmname -resourcegroupname $sourceresourcegroupname -Status
 }
-
 
 
 if (!$svm -and !$sametenant -and !$samesubscription) {
@@ -482,7 +504,9 @@ if (!$svm -and !$sametenant -and !$samesubscription) {
     return
 }
 
-
+if (!$svm.HyperVGeneration ) {
+    AddLog -type WARNING -text "No VM Generation found, assuming generation 1 , force gen 2 if it does not boot"
+}
 
 
 if (!$svm -and $sametenant -and $samesubscription  ) {
@@ -553,8 +577,8 @@ $sourceismanaged = $false
 
 $diskname = "$($vmname)-os"
 
-write-host "attempt creating OS disk "
-$osdisk = CopyDiskFromTenant -sourcediskprofile $svm.StorageProfile.OsDisk -diskname $diskname -resourcegroupname $resourcegroupname -stk  $stk -sourcecontext $sourcecontext -vmname $vmname -ostype $ostype -stksku $storagesku -location $svm.location
+write-host "attempt creating OS disk in $resourcegroupname"
+$osdisk = CopyDiskFromTenant -sourcediskprofile $svm.StorageProfile.OsDisk -sourceresourcegroupname $sourceresourcegroupname -diskname $diskname -resourcegroupname $resourcegroupname -stk  $stk -sourcecontext $sourcecontext -vmname $vmname -ostype $ostype -stksku $storagesku -location $svm.location
 if (!$osdisk ) {
     write-host "could not create OS  disk at $resourcegroupname in storage account $($stk.name) "
     return
@@ -564,7 +588,7 @@ if ($svm.StorageProfile.DataDisks) {
     $i = 1
     foreach ($datadisk in $svm.StorageProfile.DataDisks) {
         $diskname = "$($vmname)-data-$i"
-        $disk = CopyDiskFromTenant -sourcediskprofile $datadisk -diskname $diskname -resourcegroupname $resourcegroupname -stk $stk -sourcecontext $sourcecontext -vmname $vmname -ostype $ostype -stksku $storagesku -location $svm.location
+        $disk = CopyDiskFromTenant -sourcediskprofile $datadisk -diskname $diskname -sourceresourcegroupname $sourceresourcegroupname -resourcegroupname $resourcegroupname -stk $stk -sourcecontext $sourcecontext -vmname $vmname -ostype $ostype -stksku $storagesku -location $svm.location
         if (!$disk) {
             write-host "could not create data disk $i   disk at $resourcegroupname in storage account $($stk.name) "
             return
@@ -606,7 +630,7 @@ if (!$targetvnet) {
         if (!$vnet) {
             ## create subnet looking like source vnet, do not create peerings
             write-host "looking for vnet in source context"
-            $svnet = get-azvirtualnetwork -ResourceGroupName $resourceGroupName -azcontext $sourcecontext
+            $svnet = get-azvirtualnetwork -ResourceGroupName $sourceresourcegroupname -azcontext $sourcecontext
 
             #	$subnet=New-AzVirtualNetworkSubnetConfig -name "main" -addressprefix $svnet.AddressSpace.addressprefixes[0]
             $vnet = new-azvirtualnetwork -ResourceGroupName $resourceGroupName -name $vnetname -location $location -addressprefix $svnet.AddressSpace.addressprefixes -subnet $svnet.subnets
@@ -635,6 +659,8 @@ if ($osdisk -and $vnet ) {
     ## 
     if ($svm.NetworkProfile.NetworkInterfaces ) {
         $i = 0
+        if ($svm.nics) 
+        {
         foreach ($snic in $svm.nics) {
             $i++
             $nic = Get-AzNetworkInterface -Name "$vmname-nic$i"   -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
@@ -675,7 +701,28 @@ if ($osdisk -and $vnet ) {
                 $vm.NetworkProfile.NetworkInterfaces[0].Primary = $true
             }
         }
+        }
+        else{
+            ## fake subnet id , take first subnet of first vnet 
+            $subnet = (Get-AzVirtualNetwork | select -first 1 ).subnets[0]
+            foreach ($nic in $svm.NetworkProfile.NetworkInterfaces)
+            {
+                $i++
+                $nic = Get-AzNetworkInterface -Name "$vmname-nic$i"   -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
+                if (!$nic) {
+                    $nic = New-AzNetworkInterface -Force -Name "$vmname-nic$i"   -ResourceGroupName $ResourceGroupName -Location $location -SubnetId $subnet.id
+                }
+                $nicId = $nic.Id;
+            
+            $vm = Add-AzVMNetworkInterface -VM $vm -Id $nicId;
+            if ($i -eq 1 ) {
+                $vm.NetworkProfile.NetworkInterfaces[0].Primary = $true
+            }
+
+            }
+        }
     }
+    
 
     $nic = Get-AzNetworkInterface -Name "$vmname-nic1"  -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
 ##    $nic.Primary = $true
@@ -690,6 +737,15 @@ if ($osdisk -and $vnet ) {
         "Windows" {
             write-host "setting os disk as windows"
             $vm = Set-AzVMOSDisk -VM $vm  -ManagedDiskId $osdisk.id -CreateOption Attach  -windows
+            if (($svm.HyperVGeneration -eq "V2" ) -or $Genereation2)
+            {
+#                $vm = Set-AzVmSecurityProfile -VM $vm `
+ #                  -SecurityType "TrustedLaunch" 
+
+  #              $vm = Set-AzVmUefi -VM $vm `
+   #             -EnableVtpm $true `
+    #            -EnableSecureBoot $true 
+            }
         }
         "Linux" {
             write-host "setting os disk as linux"
