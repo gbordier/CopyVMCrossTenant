@@ -48,6 +48,29 @@ this script will perform the actual copy of the VM including its undering resour
 
 # pre-reqs
 
+
+## Networking
+the script create vnets (per resource group) at the target but does not create peering for now.
+Peering must be setup :
+
+``` powershell
+# $sourcecontext must contain the azcontext for the source tenant
+# replace hubnetname with the hubvnet 
+# 
+## setup hub and spoke 
+$hubvnetname ="hubvnetname"
+$hub = get-azvirtualnetwork -name $hubvnetname -azcontext $sourcecontext
+
+$spokes = get-azvirtualnetwork -name "hubvnetname" -azcontext $sourcecontext |%{ $_.Name -ne $hubvnetname }
+
+foreach ($spoke in $spokes) { 
+  Add-AzVirtualNetworkPeering -Name "$($hub.name)-$($spoke.name)" -VirtualNetwork $hub -RemoteVirtualNetworkId $spoke.Id  -AllowGatewayTransit  
+  Add-AzVirtualNetworkPeering -Name "$($spoke.name)-$($hub.name)" -VirtualNetwork $spoke -RemoteVirtualNetworkId $hub.Id  -UseRemoteGateways -AllowForwardedTraffic 
+}
+
+```
+
+## Permissions
 you *must* have the required permission on both the source and the target subscriptions, ideally you would use an Azure AD app and a certificate to get access to it , see (<https://learn.microsoft.com/en-us/powershell/azure/authenticate-azureps?view=azps-10.1.0>)
 
 to be able to use both tenant's credentials, we must store the cred as "Azure Context" and give them a name.
@@ -83,11 +106,34 @@ Connect-AzAccount -CertificateThumbprint $thumbprint -ServicePrincipal -tenantid
 select-azcontext Target
 
 ```
-	
+# Usage
+## copy from another tenant
+
+- copy many vm across tenant
+``` powershell
+## copy all VMS from one RG
+
+## to create context use connect-azaccount -contextname
+
+
+$sourcecontext = get-azcontext -Name "SourceContextName"
+
+get-azvm -azcontext $sourcecontext -resourcegroupname "MyRG" |%{
+
+  .\CopyVMCrossTenant.ps1 -resourcegroupname $_.resourcegroupname  -vmname $_.name -sourcecontext $sourcecontext
+
+}
+
+```
+
+optionnally you can add the -removesource
+
+
+
 #  What could go wrong
 
 ## Machine not rebooting correctly
-to diagnoze, enable boot diagnostics and review console screen shot
+To diagnoze, enable boot diagnostics and review console screen shot
 
 ##  0x7B inaccessible boot device
 
@@ -109,12 +155,15 @@ uniqueid disk ID=4324234 or to fix disk signature conflict.
 ##  Stuck on black screen with blinking cursor
 
 usually, when the HyperV Generation is wrong, you may have created a V1 VM for a V2 source
-- delete the VM
-- delete the disk 
+- delete the VM (remove-azvm)
+- delete the disk (remove-azdisk)
 - run the script again with -Generation2 switch to force Gen2
 
 
 
 
 the HyperV Generation might be wrong
-## inbound network connection blocked
+## Inbound network connection blocked
+
+A feature of the Intune agent is that it will block inbound traffic if the connectivity with intune is broken. 
+Depending on the network setup you may need to disable intune to be able to connect back to the VM using RDP.
