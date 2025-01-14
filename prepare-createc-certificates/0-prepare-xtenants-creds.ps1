@@ -44,9 +44,23 @@ function retrieveorcreatecertificate {
 
 		}
 	}
+	if ($cert)
+	{
+		## validate expiration
+		if ($cert.NotAfter -lt (Get-Date).AddDays(30) ) {
+			write-host "certificate is about to expire, creating a new one"
+			$cert=$null
+		} 
+		## validate certificate validity length it not greater than 380 days (per ms policy)
+		if (($cert.NotAfter - $cert.NotBefore).TotalDays -gt 380) {
+			write-host "certificate is too long, creating a new one"
+			$cert=$null
+		}
+
+	}
 	if (!$cert) {
 		Write-Host "creating certificate"
-		$cert=New-SelfSignedCertificate  -certstorelocation cert:\localmachine\my -dnsname $conf.cred.certificateName -KeyExportPolicy ExportableEncrypted -KeySpec KeyExchange -NotAfter (Get-Date).AddYears(1) -NotBefore (Get-Date).AddDays(-1) -KeyUsage KeyEncipherment,DigitalSignature -KeyLength 2048
+		$cert=New-SelfSignedCertificate  -certstorelocation cert:\currentuser\my -dnsname $conf.cred.certificateName -KeyExportPolicy ExportableEncrypted -KeySpec KeyExchange -NotAfter (Get-Date).AddDays(375) -NotBefore (Get-Date).AddDays(-1) -KeyUsage KeyEncipherment,DigitalSignature -KeyLength 2048
 		if (!$cert){
 			write-error "failed to create certificate"
 			exit
@@ -54,7 +68,7 @@ function retrieveorcreatecertificate {
 		$conf.Cred.thumbprint = $cert.Thumbprint
 		$conf | convertto-json | set-content -path (join-path $rootpath   "azure.json" )
 	}
-	
+	return $cert	
 
 	
 }
@@ -109,17 +123,18 @@ $cert=retrieveorcreatecertificate -conf $conf
 $app=Get-AzADApplication -ApplicationId $conf.cred.appid
 if (!$app){
 	write-host "creating app"
-	$app=New-AzADApplication -DisplayName $conf.cred.appid  -CertValue $cert.RawData -CertType AsymmetricX509Cert -KeyType AsymmetricX509Cert -KeyUsage Verify -StartDate (Get-Date).AddDays(-1) -EndDate (Get-Date).AddYears(1)
+	$app=New-AzADApplication -DisplayName $conf.cred.appid  -CertValue ([System.Convert]::ToBase64String($cert.RawData)) -CertType AsymmetricX509Cert -KeyType AsymmetricX509Cert -KeyUsage Verify -StartDate (Get-Date).AddDays(-1) -EndDate (Get-Date).AddYears(1)
 	$conf.Cred.appid = $app.ApplicationId
 	$conf | convertto-json | set-content -path (join-path $rootpath   "azure.json" )
 }
 
 if ($app){
-	$appcred=New-AzADAppCredential -ObjectId $app.id -CertValue $cert.RawData -StartDate (Get-Date).AddDays(-1) -EndDate (Get-Date).AddYears(1)
+	write-host "!! addding app credential to $($app.id)  :: $($cert.GetType())"
+	$appcred=New-AzADAppCredential -ObjectId $app.id -CertValue ([System.Convert]::ToBase64String($cert.RawData)) -StartDate (Get-Date).AddDays(-1) -EndDate (Get-Date).AddYears(1)
 }
 else {
+	write-error "failed to create app"
 	<# Action when all if and elseif conditions are false #>
 
 }
 
-return $cert
